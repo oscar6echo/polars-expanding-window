@@ -124,6 +124,42 @@ class Trial:
 
         self.df5 = dfc
 
+    def check_volatility_precision(self):
+        avg_vol_by_undl = (
+            self.df5.group_by("undl")
+            .agg(
+                avg_realized_vol=pl.col("vol_rea").mean(),
+            )
+        )
+
+        input_vols = pl.DataFrame(
+            {
+                "undl": ["A", "B"],
+                "input_vol": [self.vol_A, self.vol_B],
+            }
+        )
+
+        precision_metrics = (
+            avg_vol_by_undl.join(input_vols, on="undl")
+            .with_columns(
+                absolute_error=pl.col("avg_realized_vol") - pl.col("input_vol"),
+                relative_error=(
+                    (pl.col("avg_realized_vol") - pl.col("input_vol")) / pl.col("input_vol")
+                ),
+                relative_error_pct=(
+                    ((pl.col("avg_realized_vol") - pl.col("input_vol")) / pl.col("input_vol"))
+                    * 100
+                ),
+            )
+            .with_columns(
+                absolute_error=pl.col("absolute_error").round(4),
+                relative_error=pl.col("relative_error").round(4),
+                relative_error_pct=pl.col("relative_error_pct").round(2),
+            )
+        )
+
+        return precision_metrics
+
 
 c = Trial()
 c.build()
@@ -136,3 +172,28 @@ print(c.df5)
 print(f"vol_A={c.vol_A}")
 print(f"vol_B={c.vol_B}")
 print(f"n_tick_per_day={c.n_tick_per_day}")
+
+vol_precision = c.check_volatility_precision()
+print("\nVolatility Precision Metrics:")
+print(vol_precision)
+
+daily_precision = (
+    c.df5.with_columns(
+        input_vol=pl.when(pl.col("undl") == "A")
+        .then(c.vol_A)
+        .otherwise(c.vol_B),
+        error_pct=((pl.col("vol_rea") - pl.when(pl.col("undl") == "A")
+                  .then(c.vol_A)
+                  .otherwise(c.vol_B)) /
+                  pl.when(pl.col("undl") == "A")
+                  .then(c.vol_A)
+                  .otherwise(c.vol_B)) * 100,
+    )
+    .select(["day", "undl", "vol_rea", "input_vol", "error_pct"])
+    .with_columns(
+        vol_rea=pl.col("vol_rea").round(4),
+        error_pct=pl.col("error_pct").round(2)
+    )
+)
+print("\nVolatility by Day vs Input:")
+print(daily_precision)
